@@ -16,11 +16,13 @@ h1{font-size:20px;letter-spacing:2px;margin:0 0 24px}
 .track{height:10px;background:#30363b;border-radius:20px;overflow:hidden;margin:20px 0 28px}
 #bar{height:100%;width:0;background:#42d392;transition:width .15s}
 .stats{display:flex;justify-content:space-between;color:#b7bec4;font-size:14px;margin-bottom:24px}
-button{border:0;border-radius:14px;padding:17px 14px;font-size:17px;font-weight:700;color:#101214;background:#42d392}
+button{border:0;border-radius:14px;padding:14px 10px;font-size:15px;font-weight:700;color:#101214;background:#42d392;cursor:pointer}
 button:active{transform:scale(.98)}
-.primary{width:100%;margin-bottom:12px}
-.controls{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.primary{width:100%;margin-bottom:12px;padding:17px 14px;font-size:17px}
+.controls{display:grid;grid-template-columns:repeat(4, 1fr);gap:8px;margin-bottom:10px}
 .controls button{background:#2a3035;color:#fff}
+.action-controls{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.action-controls button{background:#2a3035;color:#fff;padding:14px 10px}
 #status{min-height:42px;color:#aab2b8;font-size:13px;line-height:1.5;margin:14px 0}
 .note{font-size:12px;color:#818a91;line-height:1.5;margin-top:24px}
 </style>
@@ -33,27 +35,35 @@ button:active{transform:scale(.98)}
   <div class="track"><div id="bar"></div></div>
   <div class="stats"><span id="pct">0%</span><span id="timer">00:00</span></div>
   <button class="primary" id="start">센서 켜고 시작</button>
+  
   <div class="controls">
-    <button id="minus">− 1</button>
-    <button id="plus">+ 1</button>
+    <button id="minus100">− 100</button>
+    <button id="minus10">− 10</button>
+    <button id="plus10">+ 10</button>
+    <button id="plus100">+ 100</button>
+  </div>
+  
+  <div class="controls">
+    <button id="minus1">− 1</button>
+    <button id="plus1">+ 1</button>
     <button id="pause">일시정지</button>
     <button id="reset">처음부터</button>
   </div>
-  <div id="status">휴대폰을 주머니에 넣고, 시작 버튼을 눌러 센서 권한을 허용해.</div>
-  <div class="note">자동 감지는 가속도 패턴을 이용한 간이 판정이야. 첫 20회는 실제 횟수와 맞는지 확인해. 100회마다 음성으로 안내해줄게. 화면이 잠기면 센서 감지가 멈출 수 있으니 화면을 켜둬.</div>
+  
 </main>
 <script>
 (() => {
  const $=id=>document.getElementById(id);
  let count=0, running=false, startedAt=0, elapsed=0, timerId=null;
  let lastRep=0, smooth=0, peak=0, armed=true;
- const threshold=2.0; // 동작 감지 가속도 변화 threshold
- const minGap=1000;  // 재감지 방지 시간 1초 (1000ms)
+ let motionPulseCount=0; // 센서 자극 횟수 (2회당 1회 카운트)
+
+ const threshold=2.0; // 가속도 변화 threshold
+ const minGap=1000;   // 재감지 방지 시간 1초 (1000ms)
 
  function render(){
    $('count').textContent=count.toLocaleString('en-US');
-   $('bar').style.width=Math.min(100,count/10)+'%';
-   $('pct').textContent=Math.min(100,count/10)+'%';
+   $('bar').style.width=Math.min(100,count/10)+'\%';$('pct').textContent=Math.min(100,count/10)+'%';
  }
  function timeText(ms){
    let s=Math.floor(ms/1000),m=Math.floor(s/60);s%=60;
@@ -69,11 +79,19 @@ button:active{transform:scale(.98)}
    u.lang='ko-KR';u.rate=1.05;
    speechSynthesis.speak(u);
  }
- function increment(){
-   if(!running || count>=1000) return;
-   count++;render();
-   if(count%100===0){say(count+'회 완료');$('status').textContent=count+'회 완료! 계속 가자.';}
-   if(count===1000){pause();say('천 회 완료! 차드 끝!');$('status').textContent='1,000회 완료!';}
+ function increment(val=1){
+   if(!running && val===1) return;
+   count=Math.min(1000, Math.max(0, count + val));
+   render();
+   if(count > 0 && count % 100 === 0){
+     say(count+'회 완료');
+     $('status').textContent=count+'회 완료! 계속 가자.';
+   }
+   if(count===1000){
+     pause();
+     say('천 회 완료! 차드 끝!');
+     $('status').textContent='1,000회 완료!';
+   }
  }
  function onMotion(e){
    if(!running) return;
@@ -85,19 +103,22 @@ button:active{transform:scale(.98)}
    const dynamic=Math.abs(mag-smooth);
    const now=Date.now();
 
-   // 가속도 변화가 일정 수준(threshold) 이상 올라갔을 때 리디렉션 트리거 준비
    if(dynamic > threshold){
      peak=Math.max(peak, dynamic);
      if(now - lastRep >= minGap){
-       armed = true; // 카운트 대기 상태로 전환
+       armed = true;
      }
    } else if(armed && peak > threshold){
-     // 가속도가 일정 수준 이상 발생 후 다시 안정화되었을 때 1회만 카운트
      if(now - lastRep >= minGap){
        lastRep = now;
-       armed = false; // 카운트 후 재감지 방지
+       armed = false;
        peak = 0;
-       increment();
+       
+       motionPulseCount++;
+       // 센서 자극 2번당 카운트 1회 올려줌
+       if(motionPulseCount % 2 === 0){
+         increment(1);
+       }
      }
    }
  }
@@ -121,15 +142,5 @@ button:active{transform:scale(.98)}
    updateTimer();
  }
  $('start').addEventListener('click',start);
- $('plus').addEventListener('click',()=>{if(count<1000){count++;render();}});
- $('minus').addEventListener('click',()=>{count=Math.max(0,count-1);render();});
- $('pause').addEventListener('click',pause);
- $('reset').addEventListener('click',()=>{
-   if(!confirm('횟수와 시간을 모두 초기화할까?'))return;
-   pause();count=0;elapsed=0;lastRep=0;armed=true;peak=0;render();updateTimer();$('start').textContent='센서 켜고 시작';$('status').textContent='초기화했어. 다시 시작하면 돼.';
- });
- render();updateTimer();
-})();
-</script>
-</body>
-</html>
+ $('plus1').addEventListener('click',()=>{count=Math.min(1000, count+1);render();});$('minus1').addEventListener('click',()=>{count=Math.max(0, count-1);render();});
+ $('plus10').addEventListener('click',()=>{count=Math.min(1000, count+10);render();});$('minus10').addEventListener('click',()=>{count=Math.max(0, count
