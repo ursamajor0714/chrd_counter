@@ -46,9 +46,10 @@ button:active{transform:scale(.98)}
 (() => {
  const $=id=>document.getElementById(id);
  let count=0, running=false, startedAt=0, elapsed=0, timerId=null;
- let lastRep=0, lastSignal=0, smooth=0, peak=0, above=false, armed=true;
- let speechReady=false;
- const threshold=1.65, minGap=650, maxGap=2600;
+ let lastRep=0, smooth=0, peak=0, armed=true;
+ const threshold=2.0; // 동작 감지 가속도 변화 threshold
+ const minGap=1000;  // 재감지 방지 시간 1초 (1000ms)
+
  function render(){
    $('count').textContent=count.toLocaleString('en-US');
    $('bar').style.width=Math.min(100,count/10)+'%';
@@ -78,23 +79,26 @@ button:active{transform:scale(.98)}
    if(!running) return;
    const a=e.accelerationIncludingGravity;
    if(!a || a.x==null || a.y==null || a.z==null) return;
+   
    const mag=Math.sqrt(a.x*a.x+a.y*a.y+a.z*a.z);
-   // Remove slow gravity/body-orientation changes and detect a brisk movement peak.
-   smooth=smooth*.82+mag*.18;
+   smooth=smooth*.80+mag*.20;
    const dynamic=Math.abs(mag-smooth);
    const now=Date.now();
-   if(dynamic>threshold){
-     if(!above){above=true;peak=dynamic;}
-     else peak=Math.max(peak,dynamic);
-   } else if(above){
-     above=false;
-     if(peak>threshold && now-lastRep>minGap){
-       // Require a brief return toward baseline to avoid counting a single shake repeatedly.
-       if(now-lastRep<maxGap && lastRep!==0 && now-lastRep<minGap*1.2) return;
-       lastRep=now;
+
+   // 가속도 변화가 일정 수준(threshold) 이상 올라갔을 때 리디렉션 트리거 준비
+   if(dynamic > threshold){
+     peak=Math.max(peak, dynamic);
+     if(now - lastRep >= minGap){
+       armed = true; // 카운트 대기 상태로 전환
+     }
+   } else if(armed && peak > threshold){
+     // 가속도가 일정 수준 이상 발생 후 다시 안정화되었을 때 1회만 카운트
+     if(now - lastRep >= minGap){
+       lastRep = now;
+       armed = false; // 카운트 후 재감지 방지
+       peak = 0;
        increment();
      }
-     peak=0;
    }
  }
  async function start(){
@@ -122,7 +126,7 @@ button:active{transform:scale(.98)}
  $('pause').addEventListener('click',pause);
  $('reset').addEventListener('click',()=>{
    if(!confirm('횟수와 시간을 모두 초기화할까?'))return;
-   pause();count=0;elapsed=0;lastRep=0;render();updateTimer();$('start').textContent='센서 켜고 시작';$('status').textContent='초기화했어. 다시 시작하면 돼.';
+   pause();count=0;elapsed=0;lastRep=0;armed=true;peak=0;render();updateTimer();$('start').textContent='센서 켜고 시작';$('status').textContent='초기화했어. 다시 시작하면 돼.';
  });
  render();updateTimer();
 })();
