@@ -530,37 +530,45 @@ button:active {
     }
   });
 
-  // 버튼 이벤트
-  $('start').addEventListener('click', start);
+  // 버튼 이벤트 안전 연결
+function bind(id, callback) {
+  const element = document.getElementById(id);
 
-  $('plus1').addEventListener('click', () => increment(1));
-  $('minus1').addEventListener('click', () => increment(-1));
+  if (!element) {
+    console.error('HTML 요소 없음:', id);
+    return;
+  }
 
-  $('plus10').addEventListener('click', () => increment(10));
-  $('minus10').addEventListener('click', () => increment(-10));
+  element.addEventListener('click', callback);
+}
 
-  $('plus100').addEventListener('click', () => increment(100));
-  $('minus100').addEventListener('click', () => increment(-100));
+bind('start', start);
 
-  $('pause').addEventListener('click', pause);
+bind('plus1', () => increment(1));
+bind('minus1', () => increment(-1));
 
-  $('reset').addEventListener('click', () => {
-    if (!confirm('횟수와 시간을 모두 초기화할까?')) return;
+bind('plus10', () => increment(10));
+bind('minus10', () => increment(-10));
 
-    pause();
+bind('plus100', () => increment(100));
+bind('minus100', () => increment(-100));
 
-    count = 0;
-    elapsed = 0;
+bind('pause', pause);
 
-    render();
-    updateTimer();
+bind('reset', () => {
+  if (!confirm('횟수와 시간을 모두 초기화할까?')) return;
 
-    $('start').textContent = '센서 켜고 시작';
-    $('status').textContent = '초기화 완료.';
-  });
+  pause();
+
+  count = 0;
+  elapsed = 0;
 
   render();
   updateTimer();
+
+  $('start').textContent = '센서 켜고 시작';
+  $('status').textContent = '초기화 완료.';
+});
 
 })();
 </script>
