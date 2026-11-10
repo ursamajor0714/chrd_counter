@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>CHAD 1000X 카운터</title>
+<style>
+:root{color-scheme:dark}
+*{box-sizing:border-box}
+body{margin:0;background:#101214;color:#f5f5f5;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;display:flex;min-height:100vh;align-items:center;justify-content:center;padding:20px}
+main{width:min(100%,430px);text-align:center}
+h1{font-size:20px;letter-spacing:2px;margin:0 0 24px}
+#count{font-size:76px;font-weight:800;letter-spacing:-4px;font-variant-numeric:tabular-nums}
+.sub{color:#9ba3aa;margin:4px 0 20px}
+.track{height:10px;background:#30363b;border-radius:20px;overflow:hidden;margin:20px 0 28px}
+#bar{height:100%;width:0;background:#42d392;transition:width .15s}
+.stats{display:flex;justify-content:space-between;color:#b7bec4;font-size:14px;margin-bottom:24px}
+button{border:0;border-radius:14px;padding:17px 14px;font-size:17px;font-weight:700;color:#101214;background:#42d392}
+button:active{transform:scale(.98)}
+.primary{width:100%;margin-bottom:12px}
+.controls{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.controls button{background:#2a3035;color:#fff}
+#status{min-height:42px;color:#aab2b8;font-size:13px;line-height:1.5;margin:14px 0}
+.note{font-size:12px;color:#818a91;line-height:1.5;margin-top:24px}
+</style>
+</head>
+<body>
+<main>
+  <h1>CHAD 1000X</h1>
+  <div id="count">0</div>
+  <div class="sub"> / 1,000 reps</div>
+  <div class="track"><div id="bar"></div></div>
+  <div class="stats"><span id="pct">0%</span><span id="timer">00:00</span></div>
+  <button class="primary" id="start">센서 켜고 시작</button>
+  <div class="controls">
+    <button id="minus">− 1</button>
+    <button id="plus">+ 1</button>
+    <button id="pause">일시정지</button>
+    <button id="reset">처음부터</button>
+  </div>
+  <div id="status">휴대폰을 주머니에 넣고, 시작 버튼을 눌러 센서 권한을 허용해.</div>
+  <div class="note">자동 감지는 가속도 패턴을 이용한 간이 판정이야. 첫 20회는 실제 횟수와 맞는지 확인해. 100회마다 음성으로 안내해줄게. 화면이 잠기면 센서 감지가 멈출 수 있으니 화면을 켜둬.</div>
+</main>
+<script>
+(() => {
+ const $=id=>document.getElementById(id);
+ let count=0, running=false, startedAt=0, elapsed=0, timerId=null;
+ let lastRep=0, lastSignal=0, smooth=0, peak=0, above=false, armed=true;
+ let speechReady=false;
+ const threshold=1.65, minGap=650, maxGap=2600;
+ function render(){
+   $('count').textContent=count.toLocaleString('en-US');
+   $('bar').style.width=Math.min(100,count/10)+'%';
+   $('pct').textContent=Math.min(100,count/10)+'%';
+ }
+ function timeText(ms){
+   let s=Math.floor(ms/1000),m=Math.floor(s/60);s%=60;
+   return String(m).padStart(2,'0')+':'+String(s).padStart(2,'0');
+ }
+ function updateTimer(){
+   $('timer').textContent=timeText(elapsed+(running?Date.now()-startedAt:0));
+ }
+ function say(text){
+   if(!('speechSynthesis' in window)) return;
+   speechSynthesis.cancel();
+   const u=new SpeechSynthesisUtterance(text);
+   u.lang='ko-KR';u.rate=1.05;
+   speechSynthesis.speak(u);
+ }
+ function increment(){
+   if(!running || count>=1000) return;
+   count++;render();
+   if(count%100===0){say(count+'회 완료');$('status').textContent=count+'회 완료! 계속 가자.';}
+   if(count===1000){pause();say('천 회 완료! 차드 끝!');$('status').textContent='1,000회 완료!';}
+ }
+ function onMotion(e){
+   if(!running) return;
+   const a=e.accelerationIncludingGravity;
+   if(!a || a.x==null || a.y==null || a.z==null) return;
+   const mag=Math.sqrt(a.x*a.x+a.y*a.y+a.z*a.z);
+   // Remove slow gravity/body-orientation changes and detect a brisk movement peak.
+   smooth=smooth*.82+mag*.18;
+   const dynamic=Math.abs(mag-smooth);
+   const now=Date.now();
+   if(dynamic>threshold){
+     if(!above){above=true;peak=dynamic;}
+     else peak=Math.max(peak,dynamic);
+   } else if(above){
+     above=false;
+     if(peak>threshold && now-lastRep>minGap){
+       // Require a brief return toward baseline to avoid counting a single shake repeatedly.
+       if(now-lastRep<maxGap && lastRep!==0 && now-lastRep<minGap*1.2) return;
+       lastRep=now;
+       increment();
+     }
+     peak=0;
+   }
+ }
+ async function start(){
+   try{
+     if(typeof DeviceMotionEvent==='undefined'){ $('status').textContent='이 브라우저에서 동작 센서를 지원하지 않아. iPhone Safari에서 열어줘.';return;}
+     if(typeof DeviceMotionEvent.requestPermission==='function'){
+       const permission=await DeviceMotionEvent.requestPermission();
+       if(permission!=='granted'){ $('status').textContent='센서 권한이 허용되지 않았어. 설정 후 다시 눌러줘.';return;}
+     }
+     window.removeEventListener('devicemotion',onMotion);
+     window.addEventListener('devicemotion',onMotion);
+     if(!running){running=true;startedAt=Date.now();$('start').textContent='운동 중 · 센서 작동';$('status').textContent='감지 중이야. 첫 20회는 숫자를 직접 확인해줘.';timerId=setInterval(updateTimer,500);}
+     say('차드 카운터 시작');
+   }catch(err){$('status').textContent='센서 시작 실패. iPhone Safari에서 다시 열어줘. ('+err.message+')';}
+ }
+ function pause(){
+   if(running){elapsed+=Date.now()-startedAt;running=false;}
+   $('start').textContent='다시 시작';
+   $('status').textContent='일시정지 상태야.';
+   updateTimer();
+ }
+ $('start').addEventListener('click',start);
+ $('plus').addEventListener('click',()=>{if(count<1000){count++;render();}});
+ $('minus').addEventListener('click',()=>{count=Math.max(0,count-1);render();});
+ $('pause').addEventListener('click',pause);
+ $('reset').addEventListener('click',()=>{
+   if(!confirm('횟수와 시간을 모두 초기화할까?'))return;
+   pause();count=0;elapsed=0;lastRep=0;render();updateTimer();$('start').textContent='센서 켜고 시작';$('status').textContent='초기화했어. 다시 시작하면 돼.';
+ });
+ render();updateTimer();
+})();
+</script>
+</body>
+</html>
