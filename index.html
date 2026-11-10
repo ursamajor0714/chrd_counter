@@ -32,10 +32,11 @@
 (() => {
   const $ = id => document.getElementById(id);
   let count=0, running=false, startedAt=0, elapsed=0, timerId=null;
-  let smooth=0, above=false, peak=0;
+  let smooth=0, above=false, peak=0, peakThreshold=0;
   let firstSignalTime=null, lastSignalTime=0, lastCountTime=0;
   let sensorEvents=0;
-  const THRESHOLD=2.40;          // 큰 동작만 감지: 높이면 작은 흔들림을 더 많이 무시
+const FIRST_THRESHOLD = 2.0;  // 첫 동작 기준
+const SECOND_THRESHOLD = 2.0; // 짝 동작 기준
   const MIN_SIGNAL_GAP=350;      // 한 번의 흔들림에서 중복 신호 억제
   const MAX_PAIR_GAP=3000;       // 상승/하강 신호가 짝을 이룰 수 있는 최대 간격
   const COUNT_LOCKOUT=1300;      // 한 사이클의 잔여 흔들림으로 재카운트하지 않게 함
@@ -86,13 +87,19 @@
     const mag=Math.sqrt(a.x*a.x+a.y*a.y+a.z*a.z);
     smooth=smooth*.82+mag*.18;
     const dynamic=Math.abs(mag-smooth);
-    $('debug').textContent='가속도 편차 '+dynamic.toFixed(2)+' / 기준 '+THRESHOLD.toFixed(2);
-    if(dynamic>THRESHOLD){
-      if(!above){above=true;peak=dynamic;}else peak=Math.max(peak,dynamic);
+    const now=Date.now();
+    // 첫 신호가 정해진 간격을 넘기면 만료되어, 다음 동작은 다시 높은 기준으로 시작합니다.
+    if(firstSignalTime!==null && now-firstSignalTime>MAX_PAIR_GAP) firstSignalTime=null;
+    const activeThreshold=firstSignalTime===null?FIRST_THRESHOLD:SECOND_THRESHOLD;
+    $('debug').textContent='가속도 편차 '+dynamic.toFixed(2)+' / 현재 기준 '+activeThreshold.toFixed(2);
+    if(dynamic>activeThreshold){
+      if(!above){above=true;peak=dynamic;peakThreshold=activeThreshold;}
+      else peak=Math.max(peak,dynamic);
     }else if(above){
       above=false;
-      if(peak>THRESHOLD)registerSignal(Date.now());
+      if(peak>=peakThreshold)registerSignal(now);
       peak=0;
+      peakThreshold=firstSignalTime===null?FIRST_THRESHOLD:SECOND_THRESHOLD;
     }
   }
   async function start(){
@@ -104,7 +111,7 @@
         const permission=await DeviceMotionEvent.requestPermission();
         if(permission!=='granted'){$('status').textContent='동작 센서 권한이 허용되지 않았어. Safari 권한 설정을 확인해줘.';return;}
       }
-      smooth=0;above=false;peak=0;firstSignalTime=null;lastSignalTime=0;lastCountTime=0;sensorEvents=0;
+      smooth=0;above=false;peak=0;peakThreshold=FIRST_THRESHOLD;firstSignalTime=null;lastSignalTime=0;lastCountTime=0;sensorEvents=0;
       window.removeEventListener('devicemotion',onMotion);
       window.addEventListener('devicemotion',onMotion,{passive:true});
       running=true;startedAt=Date.now();
@@ -131,7 +138,7 @@
   $('minus100').addEventListener('click',()=>{count=Math.max(0,count-100);render();});
   $('reset').addEventListener('click',()=>{
     if(!confirm('횟수와 시간을 모두 초기화할까?'))return;
-    pause();count=0;elapsed=0;smooth=0;above=false;peak=0;firstSignalTime=null;lastSignalTime=0;lastCountTime=0;sensorEvents=0;render();updateTimer();
+    pause();count=0;elapsed=0;smooth=0;above=false;peak=0;peakThreshold=FIRST_THRESHOLD;firstSignalTime=null;lastSignalTime=0;lastCountTime=0;sensorEvents=0;render();updateTimer();
     $('start').textContent='센서 켜고 시작';$('status').textContent='초기화 완료.';$('debug').textContent='센서 신호: 대기 중';
   });
   render();updateTimer();
