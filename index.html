@@ -35,7 +35,7 @@
   let smooth=0, above=false, peak=0;
   let firstSignalTime=null, lastSignalTime=0, lastCountTime=0;
   let sensorEvents=0;
-  const THRESHOLD=1.65;          // 초기 버전의 기준값
+  const THRESHOLD=2.40;          // 큰 동작만 감지: 높이면 작은 흔들림을 더 많이 무시
   const MIN_SIGNAL_GAP=350;      // 한 번의 흔들림에서 중복 신호 억제
   const MAX_PAIR_GAP=3000;       // 상승/하강 신호가 짝을 이룰 수 있는 최대 간격
   const COUNT_LOCKOUT=1300;      // 한 사이클의 잔여 흔들림으로 재카운트하지 않게 함
