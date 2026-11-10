@@ -1,163 +1,412 @@
-<!doctype html>
-<html lang="ko">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-<meta name="apple-mobile-web-app-capable" content="yes">
-<title>CHAD 1000X 카운터</title>
-<style>
-:root{color-scheme:dark}
-*{box-sizing:border-box}
-body{margin:0;background:#101214;color:#f5f5f5;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;display:flex;min-height:100vh;align-items:center;justify-content:center;padding:20px}
-main{width:min(100%,430px);text-align:center}
-h1{font-size:20px;letter-spacing:2px;margin:0 0 24px}
-#count{font-size:76px;font-weight:800;letter-spacing:-4px;font-variant-numeric:tabular-nums}
-.sub{color:#9ba3aa;margin:4px 0 20px}
-.track{height:10px;background:#30363b;border-radius:20px;overflow:hidden;margin:20px 0 28px}
-#bar{height:100%;width:0;background:#42d392;transition:width .15s}
-.stats{display:flex;justify-content:space-between;color:#b7bec4;font-size:14px;margin-bottom:24px}
-button{border:0;border-radius:14px;padding:14px 10px;font-size:15px;font-weight:700;color:#101214;background:#42d392;cursor:pointer}
-button:active{transform:scale(.98)}
-.primary{width:100%;margin-bottom:12px;padding:17px 14px;font-size:17px}
-.controls{display:grid;grid-template-columns:repeat(4, 1fr);gap:8px;margin-bottom:10px}
-.controls button{background:#2a3035;color:#fff}
-#status{min-height:42px;color:#aab2b8;font-size:13px;line-height:1.5;margin:14px 0}
-.note{font-size:12px;color:#818a91;line-height:1.5;margin-top:24px}
-</style>
-</head>
-<body>
-<main>
-  <h1>CHAD 1000X</h1>
-  <div id="count">0</div>
-  <div class="sub"> / 1,000 reps</div>
-  <div class="track"><div id="bar"></div></div>
-  <div class="stats"><span id="pct">0%</span><span id="timer">00:00</span></div>
-  <button class="primary" id="start">센서 켜고 시작</button>
-  
-  <div class="controls">
-    <button id="minus100">− 100</button>
-    <button id="minus10">− 10</button>
-    <button id="plus10">+ 10</button>
-    <button id="plus100">+ 100</button>
-  </div>
-  
-  <div class="controls">
-    <button id="minus1">− 1</button>
-    <button id="plus1">+ 1</button>
-    <button id="pause">일시정지</button>
-    <button id="reset">처음부터</button>
-  </div>
-  
-  <div id="status">휴대폰을 주머니에 넣고, 시작 버튼을 눌러 센서 권한을 허용해.</div>
-  <div class="note">스텝업 동작 특성에 맞춰 감도를 최적화했습니다. 쿨타임은 1초입니다. 화면이 잠기면 센서 감지가 멈출 수 있으니 화면을 켜둬.</div>
-</main>
+
 <script>
 (() => {
- const $=id=>document.getElementById(id);
- let count=0, running=false, startedAt=0, elapsed=0, timerId=null;
- let lastRep=0, smooth=0, armed=true;
+  const $ = id => document.getElementById(id);
 
- const accelThreshold = 1.2;
- const gyroThreshold = 40;
- const strongAccel = 1.8;
- const minGap = 1000;
+  let count = 0;
+  let running = false;
+  let startedAt = 0;
+  let elapsed = 0;
+  let timerId = null;
+  let lastSpeech = 0;
+  let wakeLock = null;
 
- function render(){
-   $('count').textContent=count.toLocaleString('en-US');
-   $('bar').style.width=Math.min(100,count/10)+'%';
-   $('pct').textContent=Math.min(100,count/10)+'%';
- }
- function timeText(ms){
-   let s=Math.floor(ms/1000),m=Math.floor(s/60);s%=60;
-   return String(m).padStart(2,'0')+':'+String(s).padStart(2,'0');
- }
- function updateTimer(){
-   $('timer').textContent=timeText(elapsed+(running?Date.now()-startedAt:0));
- }
- function say(text){
-   if(!('speechSynthesis' in window)) return;
-   speechSynthesis.cancel();
-   const u=new SpeechSynthesisUtterance(text);
-   u.lang='ko-KR';u.rate=1.05;
-   speechSynthesis.speak(u);
- }
- function increment(val=1){
-   count=Math.min(1000, Math.max(0, count + val));
-   render();
-   if(running && count > 0 && count % 100 === 0){
-     say(count+'회 완료');
-     $('status').textContent=count+'회 완료!';
-   }
-   if(count===1000 && running){
-     pause();
-     say('천 회 완료! 차드 끝!');
-     $('status').textContent='1,000회 완료!';
-   }
- }
- function onMotion(e){
-   if(!running) return;
-   const a=e.accelerationIncludingGravity;
-   const r=e.rotationRate;
-   if(!a || a.x==null) return;
-   
-   const mag=Math.sqrt(a.x*a.x+a.y*a.y+a.z*a.z);
-   smooth=smooth*.80+mag*.20;
-   const dynamic=Math.abs(mag-smooth);
+  // 센서 필터
+  let gravity = { x: 0, y: 0, z: 0 };
+  let gravityInitialized = false;
+  let smoothEnergy = 0;
+  let lastSensorTime = 0;
 
-   let gyroMag = 0;
-   if(r && r.alpha!=null){
-     gyroMag = Math.sqrt((r.alpha||0)**2 + (r.beta||0)**2 + (r.gamma||0)**2);
-   }
+  // 동작 구간 판정
+  let inMotion = false;
+  let motionPeak = 0;
+  let motionStart = 0;
+  let belowThresholdSince = 0;
+  let lastEventTime = 0;
 
-   const now=Date.now();
-   const isTriggered = (dynamic > accelThreshold && gyroMag > gyroThreshold) || (dynamic > strongAccel);
+  // 상승 / 하강 이벤트 기록
+  let firstEventTime = 0;
 
-   if(isTriggered){
-     if(armed && now - lastRep >= minGap){
-       lastRep = now;
-       armed = false;
-       increment(1);
-     }
-   } else {
-     if(now - lastRep >= minGap){
-       armed = true;
-     }
-   }
- }
- async function start(){
-   try{
-     if(typeof DeviceMotionEvent==='undefined'){ $('status').textContent='이 브라우저에서 동작 센서를 지원하지 않아.';return;}
-     if(typeof DeviceMotionEvent.requestPermission==='function'){
-       const permission=await DeviceMotionEvent.requestPermission();
-       if(permission!=='granted'){ $('status').textContent='센서 권한이 거부되었어.';return;}
-     }
-     window.removeEventListener('devicemotion',onMotion);
-     window.addEventListener('devicemotion',onMotion);
-     if(!running){running=true;startedAt=Date.now();$('start').textContent='운동 중 · 센서 감지 활성';$('status').textContent='감지 중이야.';timerId=setInterval(updateTimer,500);}
-     say('차드 카운터 시작');
-   }catch(err){$('status').textContent='센서 시작 실패: '+err.message;}
- }
- function pause(){
-   if(running){elapsed+=Date.now()-startedAt;running=false;}
-   $('start').textContent='다시 시작';
-   $('status').textContent='일시정지 상태야.';
-   updateTimer();
- }
+  // 센서 튜닝값 (m/s²)
+  const START_THRESHOLD = 1.0;
+  const END_THRESHOLD = 0.45;
+  const MIN_PEAK = 1.15;
 
- $('start').addEventListener('click',start);
- $('plus1').addEventListener('click',()=>increment(1));
- $('minus1').addEventListener('click',()=>increment(-1));
- $('plus10').addEventListener('click',()=>increment(10));
- $('minus10').addEventListener('click',()=>increment(-10));
- $('plus100').addEventListener('click',()=>increment(100));
- $('minus100').addEventListener('click',()=>increment(-100));
- $('pause').addEventListener('click',pause);
- $('reset').addEventListener('click',()=>{
-   if(!confirm('횟수와 시간을 모두 초기화할까?'))return;
-   pause();count=0;elapsed=0;lastRep=0;armed=true;render();updateTimer();$('start').textContent='센서 켜고 시작';$('status').textContent='초기화 완료.';
- });
- render();updateTimer();
+  // 시간 설정
+  const MIN_EVENT_GAP = 300;
+  const MAX_CYCLE_GAP = 3000;
+  const END_HOLD = 160;
+
+  function render() {
+    $('count').textContent = count.toLocaleString('en-US');
+
+    const pct = Math.min(100, count / 10);
+
+    $('bar').style.width = pct + '%';
+    $('pct').textContent = pct + '%';
+  }
+
+  function timeText(ms) {
+    let s = Math.floor(ms / 1000);
+    let m = Math.floor(s / 60);
+    s %= 60;
+
+    return String(m).padStart(2, '0') +
+      ':' + String(s).padStart(2, '0');
+  }
+
+  function updateTimer() {
+    $('timer').textContent = timeText(
+      elapsed + (running ? Date.now() - startedAt : 0)
+    );
+  }
+
+  function say(text) {
+    if (!('speechSynthesis' in window)) return;
+
+    speechSynthesis.cancel();
+
+    const u = new SpeechSynthesisUtterance(text);
+    u.lang = 'ko-KR';
+    u.rate = 1.05;
+
+    speechSynthesis.speak(u);
+  }
+
+  function increment(val = 1) {
+    count = Math.min(1000, Math.max(0, count + val));
+
+    render();
+
+    if (
+      running &&
+      count > 0 &&
+      count % 100 === 0
+    ) {
+      say(count + '회 완료');
+      $('status').textContent = count + '회 완료!';
+    }
+
+    if (count === 1000 && running) {
+      pause();
+      say('천 회 완료! 차드 끝!');
+      $('status').textContent = '1,000회 완료!';
+    }
+  }
+
+  // 센서 판정 상태 초기화
+  function resetDetector() {
+    gravity = { x: 0, y: 0, z: 0 };
+    gravityInitialized = false;
+    smoothEnergy = 0;
+    lastSensorTime = 0;
+
+    inMotion = false;
+    motionPeak = 0;
+    motionStart = 0;
+    belowThresholdSince = 0;
+    lastEventTime = 0;
+
+    firstEventTime = 0;
+  }
+
+  // 한 번의 움직임 구간이 완성됐을 때 호출
+  function registerEvent(now, peak) {
+    if (peak < MIN_PEAK) return;
+
+    if (now - lastEventTime < MIN_EVENT_GAP) return;
+
+    lastEventTime = now;
+
+    // 첫 번째 움직임 = 올라가기 또는 내려가기
+    if (firstEventTime === 0) {
+      firstEventTime = now;
+
+      $('status').textContent =
+        '첫 번째 동작 감지 · 다음 동작을 기다리는 중';
+
+      return;
+    }
+
+    const gap = now - firstEventTime;
+
+    // 일정 시간 내 두 번째 움직임이 발생하면 1회 완성
+    if (gap <= MAX_CYCLE_GAP) {
+      firstEventTime = 0;
+
+      increment(1);
+
+      if (running) {
+        $('status').textContent =
+          '스텝업 1회 완료 · 센서 감지 중';
+      }
+    } else {
+      // 너무 늦게 발생한 동작은 새로운 사이클의 시작
+      firstEventTime = now;
+
+      $('status').textContent =
+        '새로운 동작 사이클 감지 중';
+    }
+  }
+
+  function onMotion(e) {
+    if (!running) return;
+
+    const a = e.acceleration;
+    const ag = e.accelerationIncludingGravity;
+
+    let x, y, z;
+
+    // 중력 제거된 가속도 데이터 우선 사용
+    if (
+      a &&
+      a.x !== null &&
+      a.y !== null &&
+      a.z !== null
+    ) {
+      x = a.x;
+      y = a.y;
+      z = a.z;
+
+    } else if (
+      ag &&
+      ag.x !== null &&
+      ag.y !== null &&
+      ag.z !== null
+    ) {
+      // 중력 포함 데이터만 있을 경우 저역통과 필터로 중력 추정
+      const now = Date.now();
+
+      if (!gravityInitialized) {
+        gravity = {
+          x: ag.x,
+          y: ag.y,
+          z: ag.z
+        };
+
+        gravityInitialized = true;
+        lastSensorTime = now;
+        return;
+      }
+
+      const dt = Math.min(
+        0.1,
+        Math.max(0.001, (now - lastSensorTime) / 1000)
+      );
+
+      const alpha = Math.exp(-dt / 0.8);
+
+      gravity.x = alpha * gravity.x + (1 - alpha) * ag.x;
+      gravity.y = alpha * gravity.y + (1 - alpha) * ag.y;
+      gravity.z = alpha * gravity.z + (1 - alpha) * ag.z;
+
+      x = ag.x - gravity.x;
+      y = ag.y - gravity.y;
+      z = ag.z - gravity.z;
+
+      lastSensorTime = now;
+
+    } else {
+      return;
+    }
+
+    const now = Date.now();
+
+    // 3축 가속도 크기
+    const magnitude = Math.sqrt(
+      x * x + y * y + z * z
+    );
+
+    // 센서 노이즈 완화
+    smoothEnergy =
+      smoothEnergy * 0.65 + magnitude * 0.35;
+
+    // 동작 구간 시작
+    if (!inMotion) {
+      if (smoothEnergy >= START_THRESHOLD) {
+        inMotion = true;
+        motionStart = now;
+        motionPeak = smoothEnergy;
+        belowThresholdSince = 0;
+      }
+
+      return;
+    }
+
+    // 동작 중 최고 에너지 기록
+    motionPeak = Math.max(
+      motionPeak,
+      smoothEnergy
+    );
+
+    // 동작이 끝나는 구간 확인
+    if (smoothEnergy < END_THRESHOLD) {
+      if (belowThresholdSince === 0) {
+        belowThresholdSince = now;
+      }
+
+      // 일정 시간 이상 움직임이 약해지면 동작 종료
+      if (now - belowThresholdSince >= END_HOLD) {
+        const duration = now - motionStart;
+
+        inMotion = false;
+
+        if (duration >= 100 && duration <= 1500) {
+          registerEvent(now, motionPeak);
+        }
+
+        motionPeak = 0;
+        belowThresholdSince = 0;
+      }
+
+    } else {
+      belowThresholdSince = 0;
+    }
+  }
+
+  async function start() {
+    if (running) return;
+
+    try {
+      if (typeof DeviceMotionEvent === 'undefined') {
+        $('status').textContent =
+          '이 브라우저는 동작 센서를 지원하지 않아.';
+
+        return;
+      }
+
+      // iOS 센서 권한 요청
+      if (
+        typeof DeviceMotionEvent.requestPermission === 'function'
+      ) {
+        const permission =
+          await DeviceMotionEvent.requestPermission();
+
+        if (permission !== 'granted') {
+          $('status').textContent =
+            '센서 권한이 거부되었어.';
+
+          return;
+        }
+      }
+
+      resetDetector();
+
+      window.removeEventListener('devicemotion', onMotion);
+      window.addEventListener('devicemotion', onMotion);
+
+      running = true;
+      startedAt = Date.now();
+
+      $('start').textContent = '운동 중 · 센서 감지 활성';
+      $('status').textContent =
+        '센서 활성화 완료 · 스텝업을 시작해!';
+
+      clearInterval(timerId);
+      timerId = setInterval(updateTimer, 500);
+
+      // 지원하는 브라우저에서는 화면 잠금 방지
+      if ('wakeLock' in navigator) {
+        try {
+          wakeLock = await navigator.wakeLock.request('screen');
+        } catch (err) {
+          wakeLock = null;
+        }
+      }
+
+      // 권한 요청 중 일시정지 등 상태가 바뀌었는지 확인
+      if (!running) return;
+
+      say('차드 카운터 시작');
+
+    } catch (err) {
+      running = false;
+
+      window.removeEventListener('devicemotion', onMotion);
+
+      $('status').textContent =
+        '센서 시작 실패: ' + err.message;
+    }
+  }
+
+  async function releaseWakeLock() {
+    if (wakeLock) {
+      try {
+        await wakeLock.release();
+      } catch (e) {}
+
+      wakeLock = null;
+    }
+  }
+
+  function pause() {
+    if (running) {
+      elapsed += Date.now() - startedAt;
+      running = false;
+    }
+
+    window.removeEventListener('devicemotion', onMotion);
+
+    clearInterval(timerId);
+    timerId = null;
+
+    resetDetector();
+    releaseWakeLock();
+
+    $('start').textContent = '다시 시작';
+
+    if (count < 1000) {
+      $('status').textContent = '일시정지 상태야.';
+    }
+
+    updateTimer();
+  }
+
+  // 화면이 다시 켜졌을 때 Wake Lock 재요청
+  document.addEventListener('visibilitychange', async () => {
+    if (
+      document.visibilityState === 'visible' &&
+      running &&
+      'wakeLock' in navigator
+    ) {
+      try {
+        wakeLock = await navigator.wakeLock.request('screen');
+      } catch (e) {}
+    }
+  });
+
+  $('start').addEventListener('click', start);
+
+  $('plus1').addEventListener('click', () => increment(1));
+  $('minus1').addEventListener('click', () => increment(-1));
+
+  $('plus10').addEventListener('click', () => increment(10));
+  $('minus10').addEventListener('click', () => increment(-10));
+
+  $('plus100').addEventListener('click', () => increment(100));
+  $('minus100').addEventListener('click', () => increment(-100));
+
+  $('pause').addEventListener('click', pause);
+
+  $('reset').addEventListener('click', () => {
+    if (!confirm('횟수와 시간을 모두 초기화할까?')) {
+      return;
+    }
+
+    pause();
+
+    count = 0;
+    elapsed = 0;
+    lastSpeech = 0;
+
+    render();
+    updateTimer();
+
+    $('start').textContent = '센서 켜고 시작';
+    $('status').textContent = '초기화 완료.';
+  });
+
+  render();
+  updateTimer();
 })();
 </script>
-</body>
-</html>
